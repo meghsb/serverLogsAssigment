@@ -31,5 +31,4 @@ public class LogInspectorApplication implements CommandLineRunner{
         Instant end = Instant.now();
         LOGGER.info("Total time: {}ms", Duration.between(start, end).toMillis());		
 	}
-
 }

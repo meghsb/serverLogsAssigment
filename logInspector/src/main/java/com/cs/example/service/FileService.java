@@ -2,6 +2,6 @@ package com.cs.example.service;
 
 public interface FileService {
 
-	public String analyzeFile(String[] args);
+	public void analyzeFile(String[] args);
 
 }

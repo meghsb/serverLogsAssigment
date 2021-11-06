@@ -4,75 +4,104 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.cs.example.dao.AlertRepository;
+import com.cs.example.model.Alert;
 import com.cs.example.model.FileContent;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cs.example.util.FileUtil;
 
+@Service
+public class FileServiceImpl implements FileService {
+	private static final Logger LOGGER = LoggerFactory.getLogger(FileServiceImpl.class);
 
-@Component
-public class FileServiceImpl implements FileService{
+	@Autowired
+	private FileUtil util;
+
+	@Autowired
+	private AlertRepository alertRepository;
+
+	@Value("${alert.maxsize}")
+	private int alertMaxSize;
+	
+	@Value("${alert.maxExecutionTime}")
+	private int maxExecutionTime;
 
 	@Override
-	public String analyzeFile(String[] location) {
-		validateArg(location);
-		Map<String, FileContent> eventMap = readfile(location[1]);
-		while(eventMap.containsKey(eventMap.get))
-		
-		
-		return "";
-		
+	public void analyzeFile(String[] location) {
+		util.validateArg(location);
+		parsefile(location[1]);
 	}
 
-	private void validateArg(String[] location) {
-		if(location.length<1)
-			throw new IllegalArgumentException("Please specify path of logfile!");		
-	}
-
-	private Map<String, FileContent> readfile(String location) {
+	/**
+	 * 
+	 * @param location
+	 * @return void
+	 * @description Parses the log file, calculates the executionTime, raises alerts on higher execution time 
+	 * and saves alert information into database.
+	 */
+	private void parsefile(String location) {
 		Map<String, FileContent> map = new HashMap<String, FileContent>();
 		String line;
-		String key;
+		long execTime = 0;
+		Map<String, Alert> alerts = new HashMap<>();
+		FileContent oldContent = new FileContent();
+		Alert alert = new Alert();
 		
-		try{
+		LOGGER.info("Parsing the file and saving the alerts...");
+		try {
 			File file = new File(location);
 			FileReader fReader = new FileReader(file);
 			BufferedReader bReader = new BufferedReader(fReader);
 			
-			while((line=bReader.readLine())!=null) {
-				FileContent content = convertJsonStringtoObject(line);
-				System.out.println("Content: "+ content);
-				key = content.getId().concat("_").concat(content.getState().getValue());
-				map.put(key, content);
+			//Reading each line of file
+			while ((line = bReader.readLine()) != null) {
+				FileContent content = util.convertJsonStringtoObject(line); 
+				LOGGER.info("Event {}: ", content);
+				
+				//Check if new eventId has already occurred for either STARTED or FINISHED state or not
+				if (map.containsKey(content.getId())) {	
+					oldContent = map.get(content.getId());
+					execTime = util.calculateExecutionTime(oldContent, content);  
+					alert = new Alert(content, execTime);
+					if (execTime > maxExecutionTime) {
+						alert.setAlert(true);			//Raise the alert on exceeding executionTime
+					}
+					alerts.put(content.getId(), alert);	//Add alert information for every event
+					map.remove(content.getId());		//If matching event found, remove the eventId from map
+				} else {
+					map.put(content.getId(), content);  //If eventId is unique, save the eventId along with its content
+				}
+				if (alerts.size() > alertMaxSize) {		//On exceeding max number of alerts collected, 
+					saveAlerts(alerts.values());		//save the current pool 
+					alerts = new HashMap<>();			//and then create a new pool
+				}
+			}											//End of while loop 
+			fReader.close();							//Close the fileReader
+			if (alerts.size() != 0) {
+				saveAlerts(alerts.values());			//Save all alerts
 			}
-			fReader.close();
-			System.out.println("Contents of File: ");  
-			
-		}catch(IOException ex) {
-			ex.printStackTrace();
+
+		} catch (IOException ex) {
+			LOGGER.error("File not accessible!: {}", ex.getMessage());
 		}
-		return map;
 	}
 
-	private FileContent convertJsonStringtoObject(String line) {
-		 FileContent content = null;
-         try {
-             content = new ObjectMapper().readValue(line, FileContent.class);
-		} catch (JsonMappingException e) {
-			e.printStackTrace();
-		} catch (JsonProcessingException e) {
-			e.printStackTrace();
-		}
-		return content;
+	/**
+	 * @param alert values
+	 * @description Saves the alert information in database
+	 */
+	private void saveAlerts(Collection<Alert> alertValues) {
+		LOGGER.debug("Saving {} alerts...", alertValues.size());
+		alertRepository.saveAll(alertValues);
 	}
-	
 
 }
